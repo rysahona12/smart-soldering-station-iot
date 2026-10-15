@@ -19,8 +19,8 @@ An IoT safety station for the soldering bench, built around an **STM32 Blue Pill
 
 ## 👥 Authors
 
-- **Shams Akbar Aalok**
 - **Raisa Mahabub Ahona**
+- **Shams Akbar Aalok**
 - **Al Mamun Oualid**
 - **Tahsin Ramisha**
 
