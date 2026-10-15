@@ -1,0 +1,1121 @@
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#bfe8ff">
+  <title>Smart Soldering Station - Interactive Demo</title>
+
+  <!-- MQTT.js -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+  <style>
+    /* =========================================================
+       PREMIUM VISUAL LAYER
+       ========================================================= */
+    :root {
+      --ink: #10253c;
+      --muted: #66809a;
+      --ice: #f7fcff;
+      --glass: rgba(255,255,255,.54);
+      --glass-strong: rgba(255,255,255,.70);
+      --line: rgba(255,255,255,.72);
+      --shadow: 0 24px 70px rgba(74, 139, 181, .17), inset 0 1px 0 rgba(255,255,255,.85);
+      --cyan: #37b9ff;
+      --blue: #6e8dff;
+      --green: #36cfaa;
+      --amber: #ffb84d;
+      --red: #ff5d6c;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { min-height: 100%; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      padding: 36px 20px 50px;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      text-align: center;
+      overflow-x: hidden;
+      background:
+        radial-gradient(circle at 10% 10%, rgba(159, 224, 255, .42), transparent 28%),
+        radial-gradient(circle at 88% 15%, rgba(176, 196, 255, .35), transparent 30%),
+        radial-gradient(circle at 55% 92%, rgba(139, 236, 221, .26), transparent 32%),
+        linear-gradient(140deg, #eaf8ff 0%, #d9f2ff 42%, #edf8ff 100%);
+      transition: background-color 0.5s ease, box-shadow 0.5s ease;
+      position: relative;
+    }
+
+    /* Page-level Siren states (Activated by unattended thresholds) */
+    body.warning-level-1 {
+      background-color: #3b2a00;
+      background-image: none;
+      animation: attentionPulse 2s infinite alternate;
+    }
+    body.warning-level-2 {
+      background-color: #310505;
+      background-image: none;
+      animation: alertSiren 1s infinite alternate;
+    }
+
+    @keyframes attentionPulse {
+      from { box-shadow: inset 0 0 30px rgba(255, 165, 0, 0.2); }
+      to { box-shadow: inset 0 0 80px rgba(255, 165, 0, 0.6); background-color: #4d3300; }
+    }
+    @keyframes alertSiren {
+      from { box-shadow: inset 0 0 40px rgba(255, 0, 0, 0.4); }
+      to { box-shadow: inset 0 0 120px rgba(255, 0, 0, 0.9); background-color: #4d0000; }
+    }
+
+    /* Dim the UI elements heavily when global siren hits */
+    body.warning-level-1 .card { border-color: rgba(255, 165, 0, 0.5); background: rgba(40, 30, 10, 0.85); color: #ffebd6; }
+    body.warning-level-1 h2 { color: #ffcc80; text-shadow: none; }
+    body.warning-level-1 .metric-name, body.warning-level-1 .subtitle, body.warning-level-1 .state-line { color: #ffbd66; }
+    body.warning-level-1 .ribbon-copy strong { color: #ffebd6; }
+    body.warning-level-1 .dashboard-ribbon { background: rgba(50, 30, 0, 0.6); border-color: rgba(255, 165, 0, 0.4); }
+    
+    body.warning-level-2 .card { border-color: rgba(255, 50, 50, 0.5); background: rgba(40, 10, 10, 0.85); color: #ffd6d6; }
+    body.warning-level-2 h2 { color: #ff9999; text-shadow: none; }
+    body.warning-level-2 .metric-name, body.warning-level-2 .subtitle, body.warning-level-2 .state-line { color: #ff8080; }
+    body.warning-level-2 .ribbon-copy strong { color: #ffcccc; }
+    body.warning-level-2 .dashboard-ribbon { background: rgba(50, 0, 0, 0.6); border-color: rgba(255, 50, 50, 0.4); }
+
+    /* Hide decorative blobs when siren is active */
+    body::before, body::after {
+      content: ""; position: fixed; inset: auto; width: 420px; height: 420px;
+      border-radius: 50%; filter: blur(70px); pointer-events: none; z-index: -2;
+      animation: drift 16s ease-in-out infinite alternate;
+    }
+    body.warning-level-1::before, body.warning-level-1::after,
+    body.warning-level-2::before, body.warning-level-2::after { display: none; }
+    body::before { left: -140px; top: 28%; background: rgba(111, 208, 255, .20); }
+    body::after { right: -170px; bottom: 4%; background: rgba(126, 151, 255, .15); animation-delay: -7s; }
+
+    /* Layout Wrapper */
+    .page-layout {
+      display: flex; gap: 24px; max-width: 1400px; margin: 0 auto;
+      align-items: stretch; text-align: left; position: relative; z-index: 10;
+    }
+    .main-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .sidebar { width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; }
+
+    .top-shell { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+    .brand-block { text-align: left; }
+    .eyebrow { margin: 0 0 6px; text-transform: uppercase; letter-spacing: .20em; font-size: .68rem; font-weight: 800; color: #6190ad; }
+    h2 { margin: 0; font-size: clamp(1.75rem, 4vw, 3rem); line-height: 1.03; letter-spacing: -.045em; font-weight: 800; color: #14314c; text-shadow: 0 2px 18px rgba(75, 137, 177, .14); }
+    .subtitle { margin: 8px 0 0; color: var(--muted); font-size: .94rem; }
+
+    .live-pill {
+      display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.78); background: rgba(255,255,255,.48);
+      box-shadow: 0 12px 28px rgba(90, 153, 190, .13), inset 0 1px 0 rgba(255,255,255,.9);
+      backdrop-filter: blur(14px); color: #3b6079; font-size: .74rem; font-weight: 800;
+      letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
+    }
+    .live-dot { width: 9px; height: 9px; border-radius: 50%; background: #39d2af; box-shadow: 0 0 0 0 rgba(57,210,175,.45); animation: livePulse 1.8s infinite; }
+    .live-meta { display: grid; gap: 1px; text-align: left; line-height: 1.1; }
+    .live-meta strong { color: #31546d; font-size: .68rem; letter-spacing: .09em; }
+    .live-meta small { color: #7894a7; font-size: .61rem; letter-spacing: .04em; font-weight: 700; text-transform: none; }
+
+    .dashboard-ribbon {
+      margin: 0 auto 18px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
+      padding: 11px 14px; border: 1px solid rgba(255,255,255,.74); border-radius: 18px; background: rgba(255,255,255,.40);
+      box-shadow: 0 16px 34px rgba(85, 144, 177, .10), inset 0 1px 0 rgba(255,255,255,.86); backdrop-filter: blur(18px) saturate(130%); text-align: left;
+    }
+    .ribbon-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 11px; background: linear-gradient(145deg, rgba(255,255,255,.9), rgba(216,242,255,.60)); border: 1px solid rgba(255,255,255,.9); box-shadow: 0 8px 18px rgba(63,145,190,.10), inset 0 1px 0 #fff; color: #4b8fb0; }
+    .ribbon-copy strong { display: block; font-size: .72rem; color: #35566d; letter-spacing: .08em; text-transform: uppercase; }
+    .ribbon-copy span { display: block; margin-top: 2px; font-size: .68rem; color: #7893a6; font-weight: 650; }
+    .ribbon-age { min-width: 84px; padding: 7px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.84); background: rgba(247,252,255,.62); color: #69869b; text-align: center; font-size: .62rem; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .card {
+      position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 28px;
+      background: linear-gradient(145deg, rgba(255,255,255,.68), rgba(255,255,255,.38));
+      box-shadow: var(--shadow); backdrop-filter: blur(23px) saturate(125%); padding: 24px; min-height: 318px; text-align: left;
+      transition: transform .45s cubic-bezier(.2,.75,.2,1), box-shadow .45s ease, border-color .45s ease;
+      isolation: isolate;
+    }
+    .card::before { content: ""; position: absolute; top: -110px; right: -80px; width: 250px; height: 250px; border-radius: 50%; background: radial-gradient(circle, rgba(117,205,255,.22), transparent 67%); pointer-events: none; transition: transform .7s ease; }
+    .card::after { content: ""; position: absolute; left: 14%; right: 14%; bottom: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,.85), transparent); }
+    .card:hover { transform: translateY(-5px); box-shadow: 0 30px 85px rgba(67, 131, 173, .22), inset 0 1px 0 rgba(255,255,255,.92); }
+    .card:hover::before { transform: scale(1.12); }
+
+    .card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; position: relative; z-index: 4; }
+    .metric-name { display: flex; align-items: center; gap: 10px; color: #58758e; font-size: .78rem; text-transform: uppercase; letter-spacing: .11em; font-weight: 800; }
+    .metric-badge { padding: 6px 9px; border-radius: 999px; background: rgba(236,248,255,.74); border: 1px solid rgba(255,255,255,.84); color: #7a96aa; font-size: .62rem; letter-spacing: .08em; font-weight: 800; text-transform: uppercase; }
+    .metric-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 13px; background: linear-gradient(145deg, rgba(255,255,255,.84), rgba(218,243,255,.55)); border: 1px solid rgba(255,255,255,.85); box-shadow: 0 8px 20px rgba(73,144,181,.12), inset 0 1px 0 #fff; }
+    .metric-icon svg { width: 20px; height: 20px; stroke: currentColor; }
+
+    .visual-stage { min-height: 176px; display: grid; place-items: center; position: relative; margin: 4px 0 28px; z-index: 2; overflow: visible; }
+    .value-panel { display: flex; align-items: baseline; justify-content: center; gap: 7px; position: relative; z-index: 5 !important; pointer-events: none; }
+    .val { font-size: clamp(2.25rem, 5vw, 3.6rem); line-height: 1; letter-spacing: -.055em; font-weight: 850; margin: 0; text-align: center; transition: color .45s ease, transform .45s ease, text-shadow .45s ease; }
+    .unit { color: #6d8aa0; font-size: .82rem; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
+
+    .safe { color: #29ba9a; }
+    .danger { color: #f04f61; }
+    .idle { color: #6d879b; }
+    .active { color: #f0a82f; }
+    .state-line { position: relative; z-index: 5; margin: 14px 0 0; text-align: center; color: #6d879a; font-size: .76rem; font-weight: 700; letter-spacing: .02em; }
+
+    /* ---------------- Sidebar / Right Panel ---------------- */
+    .demo-lab {
+      padding: 18px; border: 1px solid rgba(255,255,255,.78); border-radius: 22px; background: rgba(255,255,255,.46);
+      box-shadow: 0 18px 45px rgba(70,132,170,.12), inset 0 1px 0 rgba(255,255,255,.92); backdrop-filter: blur(18px) saturate(125%);
+      position: relative; z-index: 30;
+    }
+    .demo-lab-title { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+    .demo-lab-title strong { color:#31556f; font-size:.78rem; letter-spacing:.12em; text-transform:uppercase; }
+    .demo-lab-title span { color:#7893a6; font-size:.60rem; font-weight:700; }
+    .demo-grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .demo-field { display:grid; gap:5px; }
+    .demo-field label { color:#66839a; font-size:.60rem; font-weight:850; letter-spacing:.09em; text-transform:uppercase; }
+    .demo-field select { width:100%; min-height:40px; padding:0 12px; border:1px solid rgba(255,255,255,.86); border-radius:12px; background:rgba(248,253,255,.72); color:#35566d; font:inherit; font-size:.72rem; font-weight:800; outline:none; box-shadow: inset 0 1px 0 rgba(255,255,255,.92); }
+    
+    .demo-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; flex-wrap:wrap; }
+    .demo-actions button { min-height:38px; padding:0 14px; border:1px solid rgba(255,255,255,.86); border-radius:11px; background:rgba(255,255,255,.64); color:#476b83; font:inherit; font-size:.64rem; font-weight:850; letter-spacing:.07em; text-transform:uppercase; cursor:pointer; box-shadow:0 8px 20px rgba(66,129,165,.08), inset 0 1px 0 #fff; }
+    .demo-actions button.primary { background:linear-gradient(145deg, rgba(120,205,255,.48), rgba(112,152,255,.30)); color:#315a77; flex: 1; }
+    .demo-status { margin-top:12px; color:#7a94a6; font-size:.62rem; font-weight:700; }
+
+    .cloud-card { flex: 1; display:flex; flex-direction:column; min-height: 400px; padding: 22px; margin: 0; }
+    .cloud-heading { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom: 13px; }
+    .cloud-title { display:flex; align-items:center; gap: 10px; color:#36576f; font-size:.76rem; letter-spacing:.12em; text-transform:uppercase; font-weight:850; }
+    .cloud-led { width:8px; height:8px; border-radius:50%; background:#43cdb0; box-shadow: 0 0 0 0 rgba(67,205,176,.45); animation: livePulse 1.8s infinite; }
+    
+    /* Single line JSON string wrapper */
+    #debug { 
+      flex: 1; width:100%; margin:0; padding:14px 16px; text-align:left; 
+      white-space: nowrap; overflow-x: auto; overflow-y: auto; 
+      border-radius:17px; border:1px solid rgba(255,255,255,.78); background: linear-gradient(180deg, rgba(247,253,255,.74), rgba(225,244,255,.50)); color:#56748b; box-shadow: inset 0 1px 0 rgba(255,255,255,.9); font-family: "SFMono-Regular", Consolas, monospace; font-size:.72rem; line-height:1.6; 
+    }
+    .hint-strip { margin-top: 13px; color:#7c96a9; font-size:.69rem; text-align:left; letter-spacing:.02em; }
+
+    /* ---------------- Temperature visual ---------------- */
+    .temp-core { width: 122px; height: 122px; border-radius: 50%; position: absolute; background: radial-gradient(circle at 42% 35%, rgba(255,255,255,.95), rgba(164,229,255,.76) 35%, rgba(76,183,255,.33) 63%, transparent 68%); box-shadow: 0 0 0 1px rgba(255,255,255,.82), 0 12px 45px rgba(52,175,243,.18); animation: float 4.2s ease-in-out infinite; transition: background .55s ease, box-shadow .55s ease, transform .55s ease; }
+    .temp-ring, .temp-ring::before, .temp-ring::after { position: absolute; content: ""; border-radius: 50%; pointer-events: none; }
+    .temp-ring { width: 164px; height: 164px; border: 1px solid rgba(73,190,255,.22); animation: spin 14s linear infinite; }
+    .temp-ring::before { inset: 12px; border: 1px dashed rgba(77,193,255,.20); }
+    .temp-ring::after { inset: 27px; border: 1px solid rgba(255,255,255,.72); }
+
+    .sensor-card.hot .temp-core, .sensor-card.danger-state .temp-core { background: radial-gradient(circle at 40% 35%, #fff9ed 0%, #ffd18c 28%, #ff876f 52%, rgba(255,83,103,.08) 69%, transparent 73%); box-shadow: 0 0 0 1px rgba(255,255,255,.80), 0 0 35px rgba(255,108,92,.34), 0 15px 60px rgba(255,93,85,.24); animation: hotPulse 1.05s ease-in-out infinite; }
+    .sensor-card.hot .temp-ring { border-color: rgba(255,125,94,.35); animation-duration: 6s; }
+
+    /* Unified Cohesive Fire Overlays (Front Z-index) */
+    .temperature-zone { position: fixed !important; inset: 0 !important; z-index: 60 !important; pointer-events: none; opacity: 0; transition: opacity .65s ease; }
+    .temperature-zone.active { opacity: 1; }
+    .heat-haze { position: absolute; inset: auto 0 0; height: 34vh; background: radial-gradient(circle at 18% 100%, rgba(255, 124, 84, .16), transparent 25%), radial-gradient(circle at 50% 100%, rgba(255, 198, 104, .17), transparent 30%), radial-gradient(circle at 82% 100%, rgba(255, 87, 91, .15), transparent 25%); filter: blur(20px); opacity: .0; transition: opacity .6s ease; }
+    .temperature-zone.active .heat-haze { opacity: min(1, calc(var(--fire-intensity, .7) + .1)); }
+    
+    .fire-bed { 
+      position: absolute; left: 0; right: 0; bottom: -14px; height: clamp(120px, 21vh, 220px); 
+      display: flex; align-items: flex-end; justify-content: center; 
+      filter: url(#gooey-fire) saturate(112%); /* GOOEY FILTER FOR COHESIVE FIRE */
+      transform-origin: bottom center; transform: scale(var(--fire-size, 1)); transition: transform 0.5s ease; 
+    }
+    .flame { 
+      --flame-scale: 1; position: relative; width: clamp(34px, 7vw, 76px); height: clamp(70px, 14vw, 150px); 
+      margin: 0 -22px; /* Pull flames deeply together */
+      transform-origin: 50% 100%; border-radius: 58% 42% 58% 42% / 72% 68% 32% 28%; 
+      background: radial-gradient(circle at 48% 72%, #fff8dc 0 11%, #ffd06f 22%, #ff854e 49%, rgba(255,82,74,.94) 70%, rgba(255,72,80,.08) 80%, transparent 82%); 
+      box-shadow: 0 0 28px rgba(255, 119, 77, .24), 0 0 56px rgba(255, 107, 83, .16); 
+      transform: translateY(110%) scale(var(--flame-scale)); 
+      animation: flameRise 1.55s ease-out forwards, flameDance 1.1s ease-in-out .35s infinite alternate; 
+    }
+    .flame:nth-child(2) { height: clamp(86px, 17vw, 170px); --flame-scale: .92; animation-delay: .18s, .55s; }
+    .flame:nth-child(3) { height: clamp(62px, 12vw, 130px); --flame-scale: 1.12; animation-delay: .34s, .20s; }
+    .flame:nth-child(4) { height: clamp(96px, 18vw, 182px); --flame-scale: .86; animation-delay: .07s, .75s; }
+    .flame:nth-child(5) { height: clamp(72px, 14vw, 146px); --flame-scale: 1.04; animation-delay: .46s, .42s; }
+    .flame:nth-child(6) { height: clamp(52px, 11vw, 116px); --flame-scale: .82; animation-delay: .57s, .62s; }
+    .flame:nth-child(7) { height: clamp(80px, 16vw, 158px); --flame-scale: 1.03; animation-delay: .25s, .88s; }
+    .fire-spark { position: absolute; bottom: 4vh; width: 5px; height: 5px; border-radius: 50%; background: #ffd58a; box-shadow: 0 0 12px rgba(255,151,91,.9); opacity: 0; animation: sparkUp 2.8s linear infinite; }
+    .fire-spark:nth-child(8) { left: 35%; animation-delay: .2s; }
+    .fire-spark:nth-child(9) { left: 42%; animation-delay: 1.1s; }
+    .fire-spark:nth-child(10) { left: 50%; animation-delay: .55s; }
+    .fire-spark:nth-child(11) { left: 58%; animation-delay: 1.35s; }
+    .fire-spark:nth-child(12) { left: 65%; animation-delay: .9s; }
+    .sensor-card.hot ~ .temperature-zone { opacity: 1; }
+
+    /* ---------------- Air quality visual ---------------- */
+    #fumesCard .visual-stage { margin-bottom: 62px !important; }
+    #fumes.val { font-size: clamp(1.8rem, 5vw, 2.7rem) !important; white-space: nowrap; }
+    #fumesCard .value-panel { position: absolute; bottom: -46px; left: 0; right: 0; transform: none !important; }
+    .air-zone { position: relative; width: 180px; height: 130px; display:grid; place-items:center; }
+    .air-glow { width: 112px; height: 112px; border-radius: 50%; background: radial-gradient(circle, rgba(91,215,193,.23), rgba(93,189,255,.10) 48%, transparent 70%); animation: breathing 4s ease-in-out infinite; }
+    .air-ripple, .air-ripple::before, .air-ripple::after { position:absolute; content:""; width: 84px; height: 84px; border-radius:50%; border: 1px solid rgba(74,194,221,.24); }
+    .air-ripple { animation: ripple 3.8s ease-out infinite; }
+    .air-ripple::before { inset: 9px; animation: ripple 3.8s .7s ease-out infinite; }
+    .air-ripple::after { inset: 18px; animation: ripple 3.8s 1.4s ease-out infinite; }
+    .air-particles { position:absolute; inset: 0; }
+    .air-particles i { position:absolute; width: 6px; height: 6px; border-radius:50%; background: rgba(66,198,183,.42); box-shadow: 0 0 8px rgba(71,208,202,.38); animation: driftParticle 5s ease-in-out infinite; }
+    .air-particles i:nth-child(1){left:22%;top:60%;animation-delay:-.5s}
+    .air-particles i:nth-child(2){left:30%;top:40%;animation-delay:-2.1s}
+    .air-particles i:nth-child(3){left:46%;top:67%;animation-delay:-1.1s}
+    .sensor-card.fumes .air-glow { background: radial-gradient(circle, rgba(255,93,108,.22), rgba(255,171,91,.14) 48%, transparent 70%); animation-duration: 1.6s; }
+    .sensor-card.fumes .air-ripple, .sensor-card.fumes .air-ripple::before, .sensor-card.fumes .air-ripple::after { border-color: rgba(255,101,109,.34); animation-duration: 1.5s; }
+    .sensor-card.fumes .air-particles i { background: rgba(255,105,108,.68); box-shadow: 0 0 10px rgba(255,105,108,.55); width: 7px; height: 7px; animation-duration: 2.2s; }
+    
+    .ambient-smoke { position: fixed !important; left: 0 !important; right: 0 !important; bottom: 0 !important; top: auto !important; width: 100vw !important; height: min(58vh, 560px) !important; z-index: 2 !important; opacity: 0; pointer-events: none; filter: blur(10px); transition: opacity .7s ease; }
+    .ambient-smoke.active { opacity: .72; }
+    .ambient-smoke i { position: absolute; bottom: 0; width: 130px; height: 110px; border-radius: 50%; background: radial-gradient(circle at 50% 55%, rgba(91,104,125,.22), rgba(104,114,132,.08) 50%, transparent 72%); animation: smokeLift 7s ease-in-out infinite; }
+    .ambient-smoke i:nth-child(1) { left: 8%; animation-delay: -.7s; transform: scale(.88); }
+    .ambient-smoke i:nth-child(2) { left: 29%; animation-delay: -2.6s; transform: scale(1.08); }
+
+    /* ---------------- Dock visual ---------------- */
+    #dockCard .visual-stage { margin-bottom: 45px !important; }
+    .dock-value-panel { position: absolute; left: 0; right: 0; bottom: 0; height: 54px; display: flex; justify-content: center; align-items: flex-end; z-index: 5 !important; pointer-events: none; transform: translateY(45px); }
+    .dock-zone { position: relative; width: 210px; height: 128px; padding-bottom: 4px; }
+    .dock-zone .iron, .dock-zone .dock-cradle, .dock-zone .dock-lock, .dock-zone .dock-base { z-index: 3 !important; pointer-events: none; }
+    .dock-base { position:absolute; left: 29px; right: 29px; bottom: 20px; height: 18px; border-radius: 12px; background: linear-gradient(180deg, rgba(92,139,166,.28), rgba(76,116,145,.16)); border: 1px solid rgba(255,255,255,.72); box-shadow: 0 12px 22px rgba(76,129,159,.14), inset 0 1px 0 rgba(255,255,255,.75); }
+    .dock-cradle { position:absolute; left: 86px; bottom: 32px; width: 38px; height: 42px; border-radius: 9px 9px 16px 16px; border: 2px solid rgba(83,125,151,.28); border-top: none; transform: skew(-7deg); background: linear-gradient(180deg, rgba(233,247,255,.8), rgba(188,222,240,.46)); }
+    .iron { position:absolute; left: 48px; top: 34px; width: 115px; height: 24px; border-radius: 14px 10px 10px 14px; background: linear-gradient(180deg, #ecf8ff, #b4d4e7); border: 1px solid rgba(255,255,255,.88); box-shadow: 0 10px 24px rgba(62,120,151,.16), inset 0 1px 0 rgba(255,255,255,.95); transform-origin: 16px 50%; transition: transform .65s cubic-bezier(.2,.8,.2,1), left .65s cubic-bezier(.2,.8,.2,1); }
+    .iron::before { content:""; position:absolute; left:-22px; top: 6px; width: 29px; height: 12px; border-radius: 8px 0 0 8px; background: linear-gradient(90deg, #b5cfe0, #edf8ff); border-left: 1px solid rgba(255,255,255,.84); }
+    .iron::after { content:""; position:absolute; right:-24px; top: 8px; width: 25px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #7a8791, #c0c9d0); }
+    .dock-lock { position:absolute; left: 100px; bottom: 44px; width: 10px; height: 10px; border-radius:50%; background:#59cfb4; box-shadow:0 0 0 0 rgba(89,207,180,.45); animation: lockPulse 2s infinite; opacity:0; transition: opacity .35s ease; }
+    .sensor-card.docked .iron { left: 76px; top: 49px; transform: rotate(8deg) scale(.96); }
+    .sensor-card.docked .dock-lock { opacity:1; }
+    .sensor-card.undocked .iron { animation: ironHover 2.4s ease-in-out infinite; }
+    .sensor-card.undocked .dock-lock { opacity:0; }
+
+    /* ---------------- Motion visual / Black Cat Breakout ---------------- */
+    #motionCard { overflow: visible !important; z-index: 50; }
+    #motionCard::before { display: none !important; } /* Stop glow bleeding */
+    #motionCard .visual-stage { margin-bottom: 45px !important; }
+    #motionCard .value-panel { transform: translateY(45px); }
+    .motion-zone { width: min(310px, 100%); height: 154px; position: relative; display: grid; place-items: center; }
+    .motion-zone .cat-scene { overflow: visible !important; background: none !important; border: none !important; position: absolute; inset: 0; z-index: 3 !important; }
+    
+    .cat-scene-bg {
+      position: absolute; inset: 0; border-radius: 24px; overflow: hidden;
+      background: radial-gradient(circle at 50% 75%, rgba(255,255,255,.55), transparent 30%), linear-gradient(180deg, rgba(232,248,255,.34), rgba(210,237,248,.10));
+      border: 1px solid rgba(255,255,255,.58);
+    }
+    
+    .cat-track { position: absolute; left: 5%; right: 5%; bottom: 12px; height: 118px; z-index: 3 !important; }
+    .cat-svg { position: absolute; left: 43%; bottom: 0; width: 116px; height: 94px; overflow: visible; transform-origin: 50% 100%; transition: left .65s cubic-bezier(.2,.75,.2,1), transform .35s ease; filter: drop-shadow(0 10px 12px rgba(58,112,139,.13)); transform: translateX(-50%) scale(.95); }
+    .cat-svg-tail, .cat-svg-head, .cat-svg-body, .cat-svg-legs, .cat-svg-whiskers { transform-box: fill-box; transform-origin: center; }
+    .cat-svg-tail { transform-origin: 122px 67px; transition: transform .28s ease; }
+    .cat-svg-head { transform-origin: 60px 48px; transition: transform .28s ease; }
+    .cat-svg-body { transform-origin: 75px 70px; }
+    .cat-svg-legs { transform-origin: 78px 82px; }
+
+    /* Sleeping Zzz effect */
+    .cat-zzz { position: absolute; left: 45%; bottom: 85px; display: none; color: #4a6575; font-weight: 900; font-family: monospace; pointer-events: none; z-index: 10; }
+    .sensor-card.idle-state .cat-zzz { display: block; }
+    .cat-zzz span { position: absolute; bottom: 0; opacity: 0; animation: floatZ 3s ease-in infinite; }
+    .cat-zzz span:nth-child(1) { left: 0px; font-size: 14px; animation-delay: 0s; }
+    .cat-zzz span:nth-child(2) { left: 14px; font-size: 20px; animation-delay: 1s; }
+    .cat-zzz span:nth-child(3) { left: 32px; font-size: 28px; animation-delay: 2s; }
+
+    .sensor-card.idle-state .cat-svg-body { transform: scale(1,.86) translateY(4px); }
+    .sensor-card.idle-state .cat-svg-head { transform: translateY(6px) rotate(-3deg); }
+    .sensor-card.idle-state .cat-eye-svg { transform-box: fill-box; transform-origin: center; transform: scaleY(.18); }
+    .sensor-card.idle-state .cat-svg-legs { transform: translateY(6px) scaleY(.65); }
+    .sensor-card.idle-state .cat-svg-tail { transform: translate(-2px, 4.5px) rotate(26deg) !important; }
+
+    /* Walking animation (Breakout across the page) */
+    .sensor-card.moving:not(.panic) .cat-svg { animation: catWalkAround 15s linear infinite; }
+    .sensor-card.moving:not(.panic) .cat-svg-legs { animation: catLegsSvg .26s ease-in-out infinite alternate; }
+    .sensor-card.moving:not(.panic) .cat-svg-tail { animation: catTailSvg .52s ease-in-out infinite alternate; }
+    .sensor-card.moving:not(.panic) .cat-svg-head { animation: catHeadSvg .42s ease-in-out infinite alternate; }
+
+    /* Panic state (Docked but moving) - Stays in box */
+    .sensor-card.panic .cat-svg { left: 50%; transform: translateX(-50%) scale(1.02); animation: catPanicSvg .16s linear infinite alternate; }
+    .sensor-card.panic .cat-eye-svg { fill: #d9495c; transform-box: fill-box; transform-origin: center; transform: scaleY(1.28); }
+    .sensor-card.panic .cat-svg-mouth { fill: none; stroke: #d9495c; stroke-width: 3; }
+    .sensor-card.panic .cat-svg-tail { animation: catTailPanicSvg .16s ease-in-out infinite alternate; }
+
+    /* MQTT State chip accents */
+    .status-chip { display:inline-flex; align-items:center; justify-content:center; gap: 6px; margin: 0 auto; padding: 8px 11px; border-radius: 999px; background: rgba(255,255,255,.56); border: 1px solid rgba(255,255,255,.82); color:#65839a; font-size:.66rem; font-weight:850; letter-spacing:.08em; text-transform:uppercase; box-shadow: inset 0 1px 0 rgba(255,255,255,.9); }
+    .status-chip::before { content:""; width:7px; height:7px; border-radius:50%; background: currentColor; box-shadow: 0 0 0 0 currentColor; opacity:.82; }
+    .sensor-card.hot .status-chip, .sensor-card.fumes .status-chip { color:#ee5b68; }
+    .sensor-card.docked .status-chip { color:#25b596; }
+    .sensor-card.moving .status-chip { color:#e9a22c; }
+
+    /* ---------------- Safety popup ---------------- */
+    .safety-overlay { position: fixed; inset: 0; z-index: 200 !important; display: grid !important; place-items: center !important; align-items: center !important; justify-items: center !important; padding: clamp(16px, 4vw, 30px) !important; background: rgba(31, 60, 78, .08); backdrop-filter: blur(5px); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .3s ease, visibility .3s ease; }
+    .safety-overlay.show { opacity: 1; visibility: visible; pointer-events: auto; }
+    .safety-dialog { width: min(680px, calc(100vw - 32px)) !important; margin: 0 !important; max-height: min(82vh, 520px); overflow: auto; display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; padding: 16px 18px; border-radius: 22px; border: 1px solid rgba(255,255,255,.82); background: linear-gradient(145deg, rgba(255,255,255,.86), rgba(248,252,255,.68)); box-shadow: 0 30px 90px rgba(74, 87, 106, .24), inset 0 1px 0 rgba(255,255,255,.96); backdrop-filter: blur(22px) saturate(125%); text-align: left; transform: translateY(14px) scale(.97); transition: transform .4s cubic-bezier(.2,.75,.2,1); }
+    .safety-overlay.show .safety-dialog { transform: translateY(0) scale(1); }
+    .safety-icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 15px; background: rgba(255, 191, 86, .18); border: 1px solid rgba(255, 191, 86, .42); color: #d88b25; }
+    .safety-dialog strong { display: block; color: #3a5368; font-size: .9rem; line-height: 1.25; }
+    .safety-dialog p { margin: 4px 0 0; color: #71889a; font-size: .74rem; line-height: 1.45; font-weight: 650; }
+    .safety-timer { margin-top: 6px; color: #c87622; font-size: .67rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+    .safety-close { width: 34px; height: 34px; border: 1px solid rgba(255,255,255,.85); border-radius: 11px; background: rgba(255,255,255,.54); color: #6f8798; font-size: 1rem; line-height: 1; cursor: pointer; }
+    .safety-overlay.critical .safety-dialog { border-color: rgba(255, 112, 121, .54); box-shadow: 0 34px 100px rgba(219, 78, 94, .23), inset 0 1px 0 rgba(255,255,255,.96); animation: dialogCritical 1s ease-in-out infinite; }
+    .safety-overlay.critical .safety-icon { background: rgba(255, 97, 109, .15); border-color: rgba(255, 97, 109, .36); color: #de4e61; }
+    .safety-overlay.critical .safety-timer { color: #d8495c; }
+
+    /* Responsive Adjustments */
+    @media (max-width: 980px) {
+      .page-layout { flex-direction: column; }
+      .sidebar { width: 100%; }
+      .cloud-card { min-height: 300px; }
+      .demo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 760px) {
+      body { padding: 20px 12px 52px; }
+      .dashboard-ribbon { grid-template-columns: auto 1fr; }
+      .ribbon-age { grid-column: 2; justify-self: start; }
+      .card { min-height: 326px; padding: 20px; }
+      .visual-stage { min-height: 172px; }
+      .demo-grid { grid-template-columns: 1fr 1fr; }
+      .safety-dialog { grid-template-columns: auto 1fr auto !important; width: min(94vw, 560px) !important; padding: 15px !important; }
+    }
+    @media (max-width: 480px) {
+      .top-shell { flex-direction:column; gap: 12px; }
+      .live-pill { width: 100%; }
+      .ribbon-copy strong { font-size: .65rem; }
+      h2 { font-size: 2rem; }
+      .card { border-radius: 24px; min-height: 292px; }
+      .safety-dialog strong { font-size: .82rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior:auto !important; }
+    }
+
+    /* Keyframes */
+    @keyframes drift { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(35px,-24px,0) scale(1.08); } }
+    @keyframes livePulse { 0%,100% { box-shadow:0 0 0 0 rgba(57,210,175,.38); } 50% { box-shadow:0 0 0 7px rgba(57,210,175,0); } }
+    @keyframes float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-5px); } }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    @keyframes hotPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.055); } }
+    @keyframes wave { 0%,100% { transform:translateY(7px) scaleY(.7); opacity:.2; } 50% { transform:translateY(-7px) scaleY(1); opacity:1; } }
+    @keyframes ember { 0% { transform:translateY(18px) scale(.7); opacity:0; } 25% { opacity:1; } 100% { transform:translateY(-34px) scale(1.05); opacity:0; } }
+    @keyframes breathing { 0%,100% { transform:scale(.93); opacity:.66; } 50% { transform:scale(1.04); opacity:1; } }
+    @keyframes ripple { 0% { transform:scale(.55); opacity:.8; } 100% { transform:scale(1.35); opacity:0; } }
+    @keyframes driftParticle { 0%,100% { transform:translate3d(0,6px,0) scale(.8); opacity:.3; } 50% { transform:translate3d(7px,-12px,0) scale(1.15); opacity:1; } }
+    @keyframes smoke { 0%,100% { transform:translateY(2px) scale(.95); opacity:.15; } 50% { transform:translateY(-10px) scale(1.08); opacity:.55; } }
+    @keyframes ironHover { 0%,100% { transform:translateY(0) rotate(-1deg); } 50% { transform:translateY(-4px) rotate(-3deg); } }
+    @keyframes lockPulse { 0%,100% { box-shadow:0 0 0 0 rgba(89,207,180,.45); } 50% { box-shadow:0 0 0 8px rgba(89,207,180,0); } }
+    @keyframes rotateOrbit { to { transform:rotate(360deg); } }
+    @keyframes motionBounce { from { transform:translate3d(-4px,2px,0) rotate(-8deg); } to { transform:translate3d(7px,-5px,0) rotate(10deg); } }
+    @keyframes trail { 0%,100% { transform:scaleX(.92) translateX(0) rotate(-8deg); } 50% { transform:scaleX(1.08) translateX(-4px) rotate(-5deg); } }
+    @keyframes packetFrame { 0% { opacity: 0; transform: scale(.985); } 20% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.005); } }
+    @keyframes packetScan { from { left: -25%; } to { left: 118%; } }
+    @keyframes valueReceive { 0% { opacity: .35; transform: translateY(6px) scale(.985); filter: blur(2px); } 58% { opacity: 1; transform: translateY(-2px) scale(1.01); filter: blur(0); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes panicCard { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
+    @keyframes flameRise { 0% { transform: translateY(110%) scale(calc(var(--flame-scale) * .72)); opacity: 0; } 100% { transform: translateY(0) scale(var(--flame-scale)); opacity: .98; } }
+    @keyframes flameDance { from { rotate: -2deg; } to { rotate: 2.5deg; } }
+    @keyframes sparkUp { 0% { transform: translate3d(0, 10px, 0) scale(.7); opacity: 0; } 15% { opacity: .95; } 100% { transform: translate3d(14px, -32vh, 0) scale(.45); opacity: 0; } }
+    @keyframes smokeLift { 0% { transform: translate3d(0, 0, 0) scale(.72); opacity: .08; } 45% { opacity: .38; } 100% { transform: translate3d(22px, -100px, 0) scale(1.18); opacity: 0; } }
+    @keyframes catLegsSvg { from { transform: translateX(-2px) skewX(3deg); } to { transform: translateX(2px) skewX(-3deg); } }
+    @keyframes catTailSvg { from { transform: rotate(-10deg); } to { transform: rotate(14deg); } }
+    @keyframes catHeadSvg { from { transform: translateY(0) rotate(-1deg); } to { transform: translateY(-2px) rotate(1deg); } }
+    @keyframes catPanicSvg { from { transform: translateX(-50%) translateY(0) rotate(-2deg); } to { transform: translateX(-50%) translateY(-4px) rotate(2deg); } }
+    @keyframes catTailPanicSvg { from { transform: rotate(-14deg); } to { transform: rotate(48deg); } }
+    @keyframes floatZ { 0% { transform: translate(0, 0) scale(0.8); opacity: 0; } 20% { opacity: 1; } 80% { opacity: 0.8; } 100% { transform: translate(10px, -40px) scale(1.5); opacity: 0; } }
+    
+    /* Breakout walk animation (Starts at sleeping position, goes left offscreen, flips, right offscreen, flips, back) */
+    @keyframes catWalkAround {
+        0% { transform: translateX(-50%) scale(.95) scaleX(1); }
+        16.6% { transform: translateX(calc(-50vw - 50px)) scale(.95) scaleX(1); }
+        16.7% { transform: translateX(calc(-50vw - 50px)) scale(.95) scaleX(-1); }
+        66.6% { transform: translateX(calc(80vw + 50px)) scale(.95) scaleX(-1); }
+        66.7% { transform: translateX(calc(80vw + 50px)) scale(.95) scaleX(1); }
+        100% { transform: translateX(-50%) scale(.95) scaleX(1); }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Shared Global Black Cat Gradients & Gooey Fire Filter -->
+  <svg width="0" height="0" style="position:absolute;">
+    <defs>
+      <!-- Gooey Filter to visually merge flames together -->
+      <filter id="gooey-fire">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8" result="goo" />
+        <feBlend in="SourceGraphic" in2="goo" />
+      </filter>
+
+      <!-- Integrated Shadow Blob -->
+      <filter id="shadowBlur"><feGaussianBlur stdDeviation="3"/></filter>
+
+      <!-- Black/Dark Grey Fur -->
+      <linearGradient id="catFur" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#3e434f"/>
+        <stop offset="0.62" stop-color="#1f232b"/>
+        <stop offset="1" stop-color="#0e1014"/>
+      </linearGradient>
+      <!-- Inner Ear -->
+      <linearGradient id="catEar" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#2a2d36"/>
+        <stop offset="1" stop-color="#181a20"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="temperature-zone" id="temperatureZone" aria-hidden="true">
+    <div class="heat-haze"></div>
+    <div class="fire-bed" id="fireBed">
+      <div class="flame"></div><div class="flame"></div><div class="flame"></div>
+      <div class="flame"></div><div class="flame"></div><div class="flame"></div>
+      <div class="flame"></div>
+      <i class="fire-spark"></i><i class="fire-spark"></i><i class="fire-spark"></i>
+      <i class="fire-spark"></i><i class="fire-spark"></i>
+    </div>
+  </div>
+
+  <div class="ambient-smoke" id="ambientSmoke" aria-hidden="true">
+    <i></i><i></i><i></i><i></i>
+  </div>
+
+  <div class="page-layout">
+    <!-- LEFT MAIN CONTENT -->
+    <main class="main-content">
+      <header class="top-shell">
+        <div class="brand-block">
+          <p class="eyebrow">Precision IoT Telemetry</p>
+          <h2>Smart Soldering Station</h2>
+          <p class="subtitle">Live hardware intelligence, presented in real time.</p>
+        </div>
+        <div class="live-pill">
+          <span class="live-dot"></span>
+          <span class="live-meta">
+            <strong>Cloud Live</strong>
+            <small id="packetAge">Waiting for packet…</small>
+          </span>
+        </div>
+      </header>
+
+      <section class="dashboard-ribbon" aria-label="Telemetry status">
+        <div class="ribbon-mark" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12h3l2.2-6 4.2 12L16 9l1.7 3H20"/>
+          </svg>
+        </div>
+        <div class="ribbon-copy">
+          <strong>Live telemetry stream</strong>
+          <span id="ribbonText">Waiting for the first hardware snapshot.</span>
+        </div>
+        <div class="ribbon-age" id="ribbonState">Standby</div>
+      </section>
+
+      <div class="grid">
+        <!-- TEMPERATURE -->
+        <section class="card sensor-card" id="tempCard" aria-label="Iron temperature">
+          <div class="telemetry-scan" aria-hidden="true"></div>
+          <div class="card-top">
+            <div class="metric-name">
+              <span class="metric-icon" style="color:#3ca9e8">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3a3 3 0 0 0-3 3v7.2a5 5 0 1 0 6 0V6a3 3 0 0 0-3-3Z"/>
+                  <path d="M12 7v9"/>
+                </svg>
+              </span>
+              Iron Temperature
+            </div>
+            <span class="metric-badge">Thermal</span>
+          </div>
+
+          <div class="visual-stage">
+            <div class="temp-ring"></div>
+            <div class="temp-core"></div>
+            <div class="heat-wave"><i></i><i></i><i></i><i></i></div>
+            <div class="temp-ember"><span></span><span></span><span></span><span></span><span></span></div>
+            <div class="value-panel">
+              <div id="temp" class="val">--</div>
+            </div>
+          </div>
+          <div class="state-line" id="tempState">Waiting for live temperature...</div>
+          <div style="text-align:center;margin-top:10px"><span class="status-chip">Thermal monitor</span></div>
+        </section>
+
+        <!-- AIR QUALITY -->
+        <section class="card sensor-card" id="fumesCard" aria-label="Air quality">
+          <div class="telemetry-scan" aria-hidden="true"></div>
+          <div class="card-top">
+            <div class="metric-name">
+              <span class="metric-icon" style="color:#39b9ae">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round">
+                  <path d="M4 9c4.5-3.2 7.6-3.2 12.2 0"/>
+                  <path d="M4 13c3.4-2.2 7.2-2.2 12.8 0"/>
+                  <path d="M5.5 17c2.3-1.2 5-1.2 7.6 0"/>
+                </svg>
+              </span>
+              Air Quality
+            </div>
+            <span class="metric-badge">MQ-135</span>
+          </div>
+
+          <div class="visual-stage">
+            <div class="air-zone">
+              <div class="air-ripple"></div>
+              <div class="air-glow"></div>
+              <div class="air-particles"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <div class="fume-cloud"></div>
+              <div class="value-panel"><div id="fumes" class="val">--</div></div>
+            </div>
+          </div>
+          <div class="state-line" id="fumesState">Waiting for air-quality telemetry...</div>
+          <div style="text-align:center;margin-top:10px"><span class="status-chip">Atmosphere</span></div>
+        </section>
+
+        <!-- DOCK -->
+        <section class="card sensor-card" id="dockCard" aria-label="Dock status">
+          <div class="telemetry-scan" aria-hidden="true"></div>
+          <div class="card-top">
+            <div class="metric-name">
+              <span class="metric-icon" style="color:#6a91ab">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M7 4v6a5 5 0 0 0 10 0V4"/>
+                  <path d="M4 20h16"/>
+                  <path d="M8 16h8"/>
+                </svg>
+              </span>
+              Dock Status
+            </div>
+            <span class="metric-badge">FC-51</span>
+          </div>
+
+          <div class="visual-stage">
+            <div class="dock-zone">
+              <div class="iron"></div>
+              <div class="dock-cradle"></div>
+              <div class="dock-lock"></div>
+              <div class="dock-base"></div>
+              <div class="dock-value-panel">
+                <div id="dock" class="val">--</div>
+              </div>
+            </div>
+          </div>
+          <div class="state-line" id="dockState">Waiting for dock telemetry...</div>
+          <div style="text-align:center;margin-top:10px"><span class="status-chip">Docking system</span></div>
+        </section>
+
+        <!-- MOTION -->
+        <section class="card sensor-card motion-card" id="motionCard" aria-label="Motion status">
+          <div class="telemetry-scan" aria-hidden="true"></div>
+          <div class="card-top">
+            <div class="metric-name">
+              <span class="metric-icon" style="color:#728df0">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="2.5"/>
+                  <path d="M12 3c3.1 2.5 4.6 6.1 3.7 9.3M21 12c-2.5 3.1-6.1 4.6-9.3 3.7M12 21c-3.1-2.5-4.6-6.1-3.7-9.3M3 12c2.5-3.1 6.1-4.6 9.3-3.7"/>
+                </svg>
+              </span>
+              Motion Status
+            </div>
+            <span class="metric-badge">MPU-6050</span>
+          </div>
+
+          <div class="visual-stage">
+            <div class="motion-zone">
+              <div class="cat-scene-bg"></div>
+              <div class="cat-scene">
+                <!-- Floating Zzz for sleeping cat -->
+                <div class="cat-zzz" aria-hidden="true">
+                  <span>Z</span><span>z</span><span>z</span>
+                </div>
+                <div class="cat-track">
+                  <!-- Inline Black Cat SVG -->
+                  <svg class="cat cat-svg" viewBox="0 0 150 105" role="img" aria-label="Animated cat companion">
+                    <!-- Integrated dynamic shadow -->
+                    <ellipse cx="75" cy="100" rx="40" ry="8" fill="rgba(77,118,144,.2)" filter="url(#shadowBlur)"/>
+                    <g class="cat-svg-tail" fill="none" stroke="#222" stroke-width="8" stroke-linecap="round">
+                      <path d="M121 65 C144 53 145 28 128 21"/>
+                    </g>
+                    <g class="cat-svg-body">
+                      <path d="M44 62 C49 47 68 42 91 46 C107 49 115 61 113 74 C111 86 97 92 75 91 C55 90 42 81 44 62 Z" fill="url(#catFur)" stroke="#222" stroke-width="1.5"/>
+                    </g>
+                    <g class="cat-svg-legs" fill="url(#catFur)" stroke="#222" stroke-width="1.5">
+                      <rect class="cat-leg-svg left" x="55" y="74" width="12" height="24" rx="6"/>
+                      <rect class="cat-leg-svg right" x="89" y="74" width="12" height="24" rx="6"/>
+                    </g>
+                    <g class="cat-svg-head">
+                      <path d="M23 39 L29 10 L48 25 C56 20 66 20 74 25 L94 10 L98 39 C99 56 88 69 60 70 C35 70 22 57 23 39 Z" fill="url(#catFur)" stroke="#222" stroke-width="1.5"/>
+                      <path d="M29 15 L32 34 L45 25 Z M89 15 L87 34 L76 25 Z" fill="url(#catEar)" opacity=".9"/>
+                      <g class="cat-svg-eyes" fill="#96e03a">
+                        <ellipse class="cat-eye-svg left" cx="42" cy="42" rx="4.2" ry="5.6"/>
+                        <ellipse class="cat-eye-svg right" cx="78" cy="42" rx="4.2" ry="5.6"/>
+                      </g>
+                      <path class="cat-svg-nose" d="M60 50 l-4 3 h8 z" fill="#db5a74"/>
+                      <path class="cat-svg-mouth" d="M60 54 C55 59 52 57 49 56 M60 54 C65 59 68 57 71 56" fill="none" stroke="#7b97a8" stroke-width="2" stroke-linecap="round"/>
+                      <g class="cat-svg-whiskers" fill="none" stroke="#7b97a8" stroke-width="1.5" stroke-linecap="round" opacity=".5">
+                        <path d="M39 50 L10 45 M39 54 L8 53 M39 58 L12 62"/>
+                        <path d="M81 50 L111 45 M81 54 L113 53 M81 58 L109 62"/>
+                      </g>
+                    </g>
+                  </svg>
+                </div>
+              </div>
+              <div class="value-panel" style="position:absolute;inset:0;align-items:flex-end;padding-bottom:3px">
+                <div id="motion" class="val">--</div>
+              </div>
+            </div>
+          </div>
+          <div class="state-line" id="motionState">Waiting for motion telemetry...</div>
+          <div style="text-align:center;margin-top:10px"><span class="status-chip">Movement</span></div>
+        </section>
+      </div>
+    </main>
+
+    <!-- RIGHT SIDEBAR -->
+    <aside class="sidebar">
+      <section class="demo-lab" aria-label="Interactive dashboard simulation controls">
+        <div class="demo-lab-title">
+          <strong>Interactive Preview</strong>
+          <span>Build any sensor combination manually.</span>
+        </div>
+        <div class="demo-grid">
+          <div class="demo-field">
+            <label for="demoTemp">Temperature</label>
+            <select id="demoTemp">
+              <option value="250">25.0°C</option>
+              <option value="342" selected>34.2°C</option>
+              <option value="395">39.5°C</option>
+              <option value="520">52.0°C</option>
+              <option value="800">80.0°C</option>
+            </select>
+          </div>
+          <div class="demo-field">
+            <label for="demoFumes">Air</label>
+            <select id="demoFumes">
+              <option value="0" selected>Clear</option>
+              <option value="1">Fumes detected</option>
+            </select>
+          </div>
+          <div class="demo-field">
+            <label for="demoDock">Dock</label>
+            <select id="demoDock">
+              <option value="1" selected>Docked</option>
+              <option value="0">Undocked</option>
+            </select>
+          </div>
+          <div class="demo-field">
+            <label for="demoMotion">Motion</label>
+            <select id="demoMotion">
+              <option value="0" selected>Idle</option>
+              <option value="1">Moving</option>
+            </select>
+          </div>
+          <div class="demo-field" style="grid-column: span 2;">
+            <label for="demoUnattended">Still for</label>
+            <select id="demoUnattended">
+              <option value="0" selected>0 sec</option>
+              <option value="30">30 sec</option>
+              <option value="45">45 sec (Amber Siren)</option>
+              <option value="60">60 sec (Red Siren)</option>
+              <option value="75">75 sec</option>
+            </select>
+          </div>
+        </div>
+        <div class="demo-actions">
+          <button type="button" id="demoDismissWarning" style="flex:1;">Dismiss warning</button>
+          <button type="button" class="primary" id="demoApply" style="flex:1;">Apply config</button>
+        </div>
+        <div class="demo-status" id="demoStatus">34.2°C · clear · docked · idle · 0 sec unattended</div>
+      </section>
+
+      <section class="card cloud-card" aria-label="Live cloud MQTT log">
+        <div class="cloud-heading">
+          <div class="cloud-title"><span class="cloud-led"></span> Live Telemetry Log</div>
+          <span class="metric-badge">Local simulation</span>
+        </div>
+        <!-- Using white-space: nowrap dynamically inside #debug ensures one-line format -->
+        <div id="debug">Demo telemetry driver ready.</div>
+      </section>
+    </aside>
+  </div>
+
+  <div class="safety-overlay" id="safetyOverlay" aria-hidden="true">
+    <div class="safety-dialog" role="alertdialog" aria-labelledby="safetyTitle" aria-describedby="safetyText">
+      <div class="safety-icon" aria-hidden="true">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3 21 19H3L12 3Z"/>
+          <path d="M12 9v4"/>
+          <circle cx="12" cy="16.5" r=".8" fill="currentColor"/>
+        </svg>
+      </div>
+      <div>
+        <strong id="safetyTitle">Attention: soldering iron may be unattended</strong>
+        <p id="safetyText">The iron has been unattended for over 45 seconds. Please pay attention to the soldering iron.</p>
+        <div class="safety-timer" id="safetyTimer">45 seconds unattended</div>
+      </div>
+      <button class="safety-close" id="safetyClose" type="button" aria-label="Dismiss warning">×</button>
+    </div>
+  </div>
+
+  <script>
+    /* Demo-only local telemetry driver. */
+    (function () {
+      const temp = document.getElementById('temp');
+      const fumes = document.getElementById('fumes');
+      const dock = document.getElementById('dock');
+      const motion = document.getElementById('motion');
+      const debug = document.getElementById('debug');
+      const status = document.getElementById('demoStatus');
+
+      const controls = {
+        t: document.getElementById('demoTemp'),
+        f: document.getElementById('demoFumes'),
+        d: document.getElementById('demoDock'),
+        m: document.getElementById('demoMotion'),
+        u: document.getElementById('demoUnattended')
+      };
+
+      function apply() {
+        const data = {
+          t: Number(controls.t.value),
+          f: Number(controls.f.value),
+          d: Number(controls.d.value),
+          m: Number(controls.m.value),
+          u: Number(controls.u.value)
+        };
+
+        if (data.d === 1 || data.m === 1) data.u = 0;
+
+        temp.innerHTML = (data.t / 10).toFixed(1) + '&deg;C';
+        temp.className = data.t / 10 > 40 ? 'val danger' : 'val safe';
+        fumes.innerHTML = data.f ? 'FUMES DETECTED' : 'CLEAR';
+        fumes.className = data.f ? 'val danger' : 'val safe';
+        dock.innerHTML = data.d ? 'DOCKED' : 'UNDOCKED';
+        dock.className = data.d ? 'val safe' : 'val active';
+        motion.innerHTML = data.m ? 'MOVING' : 'IDLE';
+        motion.className = data.m ? 'val active' : 'val idle';
+
+        window.__dashboardResetWarnings();
+        
+        const timestamp = new Date().toLocaleTimeString();
+        // Outputs exactly on one line with JSON.stringify instead of spaced out
+        debug.innerHTML += `<br/><br/>[${timestamp}] RAW MQTT: ${JSON.stringify(data)}`;
+        debug.scrollTop = debug.scrollHeight;
+
+        status.textContent = `${(data.t / 10).toFixed(1)}°C · ${data.f ? 'fumes' : 'clear'} · ${data.d ? 'docked' : 'undocked'} · ${data.m ? 'moving' : 'idle'} · ${data.u} sec unattended`;
+      }
+
+      document.getElementById('demoApply').addEventListener('click', apply);
+      document.getElementById('demoDismissWarning').addEventListener('click', () => {
+        document.getElementById('safetyClose').click();
+      });
+
+      apply();
+    })();
+  </script>
+
+  <!-- Visual state controller: timers, animations, layout modifiers -->
+  <script>
+    (function () {
+      const els = {
+        temp: document.getElementById('temp'),
+        fumes: document.getElementById('fumes'),
+        dock: document.getElementById('dock'),
+        motion: document.getElementById('motion'),
+        debug: document.getElementById('debug'),
+        packetAge: document.getElementById('packetAge'),
+        ribbonText: document.getElementById('ribbonText'),
+        ribbonState: document.getElementById('ribbonState'),
+        temperatureZone: document.getElementById('temperatureZone'),
+        fireBed: document.getElementById('fireBed'),
+        ambientSmoke: document.getElementById('ambientSmoke'),
+        safetyOverlay: document.getElementById('safetyOverlay'),
+        safetyTitle: document.getElementById('safetyTitle'),
+        safetyText: document.getElementById('safetyText'),
+        safetyTimer: document.getElementById('safetyTimer'),
+        safetyClose: document.getElementById('safetyClose')
+      };
+
+      const cards = {
+        temp: document.getElementById('tempCard'),
+        fumes: document.getElementById('fumesCard'),
+        dock: document.getElementById('dockCard'),
+        motion: document.getElementById('motionCard')
+      };
+
+      const states = {
+        lastPacketAt: null,
+        packetCount: 0,
+        lastKnownPayload: null,
+        unattendedSince: null,
+        lastObservedUndocked: false,
+        lastObservedMoving: false,
+        warningLevel: 0,
+        warningDismissedUntilStateChange: false,
+        safetySignature: ''
+      };
+
+      function actualTempValue() {
+        const raw = els.temp.textContent.replace('°C', '').trim();
+        const value = parseFloat(raw);
+        return Number.isFinite(value) ? value : null;
+      }
+
+      function isDocked() { return els.dock.classList.contains('safe') || els.dock.textContent.trim() === 'DOCKED'; }
+      function isUndocked() { return els.dock.classList.contains('active') || els.dock.textContent.trim() === 'UNDOCKED'; }
+      function isMoving() { return els.motion.classList.contains('active') || els.motion.textContent.trim() === 'MOVING'; }
+      function isFuming() { return els.fumes.classList.contains('danger') || els.fumes.textContent.includes('DETECTED'); }
+
+      function parseLatestRawTelemetry() {
+        const rawLogs = els.debug.innerText.split('RAW MQTT:');
+        if (rawLogs.length < 2) return null;
+        try {
+          return JSON.parse(rawLogs[rawLogs.length - 1].trim());
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function setSafetyOverlay(level, unattendedSeconds) {
+        if (level <= 0) {
+          els.safetyOverlay.classList.remove('show', 'critical');
+          els.safetyOverlay.setAttribute('aria-hidden', 'true');
+          document.body.classList.remove('warning-level-1', 'warning-level-2');
+          states.warningLevel = 0;
+          return;
+        }
+
+        if (states.warningDismissedUntilStateChange && states.warningLevel === level) {
+          return;
+        }
+
+        const critical = level >= 2;
+        const levelChanged = states.warningLevel !== level;
+        if (levelChanged) states.warningDismissedUntilStateChange = false;
+
+        // Apply global page layout changes (Siren/Amber tint)
+        document.body.classList.toggle('warning-level-1', level === 1);
+        document.body.classList.toggle('warning-level-2', level === 2);
+
+        els.safetyOverlay.classList.toggle('critical', critical);
+        els.safetyOverlay.classList.add('show');
+        els.safetyOverlay.setAttribute('aria-hidden', 'false');
+
+        els.safetyTitle.textContent = critical
+          ? 'Danger: soldering iron is unattended'
+          : 'Attention: soldering iron may be unattended';
+
+        els.safetyText.textContent = critical
+          ? 'The iron has remained undocked and still for 60 seconds. Check the station immediately.'
+          : 'The iron has been unattended for over 45 seconds. Please pay attention to the soldering iron.';
+
+        els.safetyTimer.textContent = critical
+          ? '60+ seconds unattended'
+          : `${Math.max(45, Math.floor(unattendedSeconds))} seconds unattended`;
+
+        states.warningLevel = level;
+      }
+
+      function updateUnattendedState(payload) {
+        const undocked = isUndocked();
+        const moving = isMoving();
+        const now = Date.now();
+
+        if (!undocked) {
+          states.unattendedSince = null;
+          states.warningDismissedUntilStateChange = false;
+          states.safetySignature = 'docked';
+          setSafetyOverlay(0, 0);
+          return;
+        }
+
+        let unattendedSeconds = null;
+        if (payload && Number.isFinite(Number(payload.u))) {
+          unattendedSeconds = Math.max(0, Number(payload.u));
+          if (states.unattendedSince === null) {
+            states.unattendedSince = now - unattendedSeconds * 1000;
+          }
+        }
+
+        if (states.unattendedSince === null) {
+          states.unattendedSince = states.lastObservedUndocked ? states.unattendedSince || now : now;
+        }
+
+        if (moving) {
+          states.unattendedSince = now;
+          states.warningLevel = 0;
+          states.warningDismissedUntilStateChange = false;
+          states.safetySignature = 'moving';
+          setSafetyOverlay(0, 0);
+          return;
+        }
+
+        if (unattendedSeconds === null) {
+          unattendedSeconds = Math.max(0, (now - states.unattendedSince) / 1000);
+        }
+
+        const level = unattendedSeconds >= 60 ? 2 : unattendedSeconds >= 45 ? 1 : 0;
+        const signature = `undocked-idle-${level}`;
+        if (signature !== states.safetySignature) {
+          states.warningDismissedUntilStateChange = false;
+          states.safetySignature = signature;
+        }
+
+        setSafetyOverlay(level, unattendedSeconds);
+      }
+
+      function setCatMode(mode) {
+        cards.motion.classList.toggle('panic', mode === 'panic');
+        cards.motion.classList.toggle('moving', mode === 'moving');
+        cards.motion.classList.toggle('idle-state', mode === 'idle');
+      }
+
+      function updateVisualState(payload) {
+        const tempValue = actualTempValue();
+        const tempKnown = tempValue !== null;
+        const fumesOn = isFuming();
+        const docked = isDocked();
+        const undocked = isUndocked();
+        const moving = isMoving();
+
+        const hot = tempKnown && tempValue > 40;
+        cards.temp.classList.toggle('hot', hot);
+        cards.temp.classList.toggle('danger-state', els.temp.classList.contains('danger'));
+
+        if (hot) {
+          const intensity = Math.min(1, Math.max(.55, (tempValue - 40) / 45 + .55));
+          const size = Math.min(2.5, Math.max(1, 1 + ((tempValue - 40) / 40))); // Grows scale from 1.0 at 40C to 2.0 at 80C
+          
+          els.temperatureZone.style.setProperty('--fire-intensity', intensity.toFixed(2));
+          els.fireBed.style.setProperty('--fire-size', size.toFixed(2));
+          els.temperatureZone.classList.add('active');
+          els.ribbonState.textContent = 'Thermal alert';
+          els.ribbonText.textContent = `${tempValue.toFixed(1)}°C detected.`;
+        } else {
+          els.temperatureZone.classList.remove('active');
+          els.ribbonState.textContent = 'Monitoring';
+          els.ribbonText.textContent = tempKnown
+            ? `${tempValue.toFixed(1)}°C • live hardware snapshot received.`
+            : 'Waiting for the first hardware snapshot.';
+        }
+
+        document.getElementById('tempState').textContent = !tempKnown
+          ? 'Waiting for live temperature...'
+          : hot
+            ? 'High temperature — handle the iron with care.'
+            : 'Thermal level within the monitored range.';
+
+        cards.fumes.classList.toggle('fumes', fumesOn);
+        els.ambientSmoke.classList.toggle('active', fumesOn);
+        document.getElementById('fumesState').textContent = fumesOn
+          ? 'Airborne fumes detected.'
+          : els.fumes.textContent === 'CLEAR'
+            ? 'Air is clear.'
+            : 'Waiting for air-quality telemetry...';
+
+        cards.dock.classList.toggle('docked', docked);
+        cards.dock.classList.toggle('undocked', undocked);
+        document.getElementById('dockState').textContent = docked
+          ? 'Iron seated in the safety cradle.'
+          : undocked
+            ? 'Iron is away from the docking cradle.'
+            : 'Waiting for dock telemetry...';
+
+        const panic = docked && moving;
+        if (panic) {
+          setCatMode('panic');
+          document.getElementById('motionState').textContent = 'Unexpected movement detected.';
+        } else if (moving && undocked) {
+          setCatMode('moving');
+          document.getElementById('motionState').textContent = 'Movement detected.';
+        } else if (!moving && undocked) {
+          setCatMode('idle');
+          document.getElementById('motionState').textContent = 'Stationary while undocked.';
+        } else if (!moving && docked) {
+          setCatMode('idle');
+          document.getElementById('motionState').textContent = 'Stationary while docked.';
+        } else {
+          setCatMode('idle');
+          document.getElementById('motionState').textContent = 'Waiting for motion telemetry...';
+        }
+
+        updateUnattendedState(payload);
+        states.lastObservedUndocked = undocked;
+        states.lastObservedMoving = moving;
+      }
+
+      function animateDataArrival() {
+        states.lastPacketAt = Date.now();
+        states.packetCount += 1;
+
+        [cards.temp, cards.fumes, cards.dock, cards.motion].forEach(card => {
+          card.classList.remove('packet-arriving');
+          void card.offsetWidth;
+          card.classList.add('packet-arriving');
+          setTimeout(() => card.classList.remove('packet-arriving'), 700);
+        });
+
+        [els.temp, els.fumes, els.dock, els.motion].forEach(el => {
+          el.classList.remove('value-updated');
+          void el.offsetWidth;
+          el.classList.add('value-updated');
+          setTimeout(() => el.classList.remove('value-updated'), 500);
+        });
+
+        els.packetAge.textContent = 'Packet received just now';
+        setTimeout(updatePacketAge, 1100);
+
+        const payload = parseLatestRawTelemetry();
+        states.lastKnownPayload = payload;
+        updateVisualState(payload);
+      }
+
+      function updatePacketAge() {
+        if (!states.lastPacketAt) {
+          els.packetAge.textContent = 'Waiting for packet…';
+          return;
+        }
+        const seconds = Math.max(0, (Date.now() - states.lastPacketAt) / 1000);
+        els.packetAge.textContent = seconds < 1.5
+          ? 'Packet received just now'
+          : `Last packet ${seconds.toFixed(1)}s ago`;
+      }
+
+      function closeWarningTemporarily() {
+        states.warningDismissedUntilStateChange = true;
+        els.safetyOverlay.classList.remove('show');
+        els.safetyOverlay.setAttribute('aria-hidden', 'true');
+        // If they dismiss it, calm down the siren but keep the status tracker active
+        document.body.classList.remove('warning-level-1', 'warning-level-2');
+      }
+
+      [els.temp, els.fumes, els.dock, els.motion].forEach((el) => {
+        new MutationObserver(() => updateVisualState(states.lastKnownPayload))
+          .observe(el, { attributes: true, childList: true, subtree: true });
+      });
+
+      new MutationObserver(() => {
+        animateDataArrival();
+        updatePacketAge();
+      }).observe(els.debug, { childList: true, characterData: true, subtree: true });
+
+      els.safetyClose.addEventListener('click', closeWarningTemporarily);
+      window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeWarningTemporarily();
+      });
+
+      setInterval(() => {
+        updatePacketAge();
+        updateUnattendedState(states.lastKnownPayload);
+      }, 250);
+
+      window.__dashboardSetPayload = function (data, sourceLabel) {
+        els.temp.innerHTML = (Number(data.t) / 10).toFixed(1) + '&deg;C';
+        els.temp.className = Number(data.t) / 10 > 40 ? 'val danger' : 'val safe';
+        els.fumes.innerHTML = data.f ? 'FUMES DETECTED' : 'CLEAR';
+        els.fumes.className = data.f ? 'val danger' : 'val safe';
+        els.dock.innerHTML = data.d ? 'DOCKED' : 'UNDOCKED';
+        els.dock.className = data.d ? 'val safe' : 'val active';
+        els.motion.innerHTML = data.m ? 'MOVING' : 'IDLE';
+        els.motion.className = data.m ? 'val active' : 'val idle';
+        els.debug.innerText = `RAW MQTT: ${JSON.stringify(data)}`;
+        els.ribbonText.textContent = sourceLabel || 'Telemetry packet received.';
+      };
+
+      window.__dashboardResetWarnings = function () {
+        states.warningDismissedUntilStateChange = false;
+        states.warningLevel = 0;
+        states.safetySignature = '';
+        els.safetyOverlay.classList.remove('show', 'critical');
+        els.safetyOverlay.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('warning-level-1', 'warning-level-2');
+      };
+
+      updateVisualState(null);
+    })();
+  </script>
+</body>
+</html>
